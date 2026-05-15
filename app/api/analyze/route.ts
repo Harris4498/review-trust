@@ -1,6 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextRequest, NextResponse } from 'next/server';
 
+// Naver API blocks non-Korean IPs — run from Seoul region
+export const preferredRegion = 'icn1';
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ─── URL parsing ───────────────────────────────────────────────
