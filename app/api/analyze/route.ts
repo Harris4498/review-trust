@@ -19,11 +19,23 @@ function extractPlaceId(url: string): string | null {
 }
 
 // ─── Follow short URL redirect ────────────────────────────────
+// naver.me uses HTTP 302 — must use GET (HEAD may not forward redirect properly)
 async function resolveUrl(url: string): Promise<string> {
-  if (!url.includes('naver.me') && !url.includes('me.naver')) return url;
+  const isShort = /naver\.me\/|me\.naver\.com\//.test(url);
+  if (!isShort) return url;
   try {
-    const res = await fetch(url, { method: 'HEAD', redirect: 'follow' });
-    return res.url || url;
+    const res = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(6000),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html,application/xhtml+xml,*/*',
+        'Accept-Language': 'ko-KR,ko;q=0.9',
+      },
+    });
+    // res.url is the final URL after all redirects
+    return res.url && res.url !== url ? res.url : url;
   } catch {
     return url;
   }

@@ -332,35 +332,232 @@ function ResultView({ result, onReset }: { result: AnalysisResult; onReset: () =
   );
 }
 
-// ─── Loading steps ─────────────────────────────────────────────
-const LOADING_STEPS = [
-  { icon: '🔗', text: '링크 확인 중...' },
-  { icon: '📋', text: '리뷰 데이터 수집 중...' },
-  { icon: '🔍', text: '패턴 분석 중...' },
-  { icon: '🤖', text: 'AI 신뢰도 평가 중...' },
+// ─── Loading animation ─────────────────────────────────────────
+const PHASES = [
+  { label: '지도에서 플레이스 탐색 중...' },
+  { label: '리뷰 데이터 수집 중...' },
+  { label: '패턴 & 작성자 분석 중...' },
+  { label: 'AI 신뢰도 평가 중...' },
 ];
 
-function LoadingView() {
-  const [step, setStep] = useState(0);
-
-  useEffect(() => {
-    const id = setInterval(() => setStep(s => Math.min(s + 1, LOADING_STEPS.length - 1)), 2200);
-    return () => clearInterval(id);
-  }, []);
-
+/* Map scene */
+function MapScene() {
   return (
-    <div className="bg-white min-h-screen flex flex-col items-center justify-center px-8 py-16">
-      <div className="w-14 h-14 border-4 border-[#EEEEEE] border-t-[#111111] rounded-full animate-spin mb-8" />
-      <div className="space-y-3 w-full max-w-xs">
-        {LOADING_STEPS.map((s, i) => (
-          <div key={i} className={`flex items-center gap-3 transition-all duration-500 ${i <= step ? 'opacity-100' : 'opacity-25'}`}>
-            <span className="text-lg">{s.icon}</span>
-            <span className={`text-[13px] ${i === step ? 'font-bold text-[#111111]' : 'text-[#8D8D8D]'}`}>{s.text}</span>
-            {i < step && <span className="text-[#00C37D] ml-auto text-sm">✓</span>}
+    <div className="relative w-full h-full overflow-hidden bg-[#F0F4F8]">
+      {/* Grid tiles */}
+      <div className="absolute inset-0" style={{ backgroundImage: 'linear-gradient(#D8E0EA 1px,transparent 1px),linear-gradient(90deg,#D8E0EA 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
+      {/* Roads */}
+      <div className="absolute left-0 right-0 top-[38%] h-[10px] bg-white/80" />
+      <div className="absolute left-0 right-0 top-[65%] h-[6px] bg-white/60" />
+      <div className="absolute top-0 bottom-0 left-[30%] w-[10px] bg-white/80" />
+      <div className="absolute top-0 bottom-0 left-[62%] w-[6px] bg-white/60" />
+      {/* Building blobs */}
+      {[[14,12,22,16,'#CBD5E0'],[50,20,28,18,'#BFC8D4'],[68,55,18,14,'#CBD5E0'],[18,55,24,16,'#BFC8D4'],[42,72,20,14,'#C4CDD8']].map(([x,y,w,h,c],i)=>(
+        <div key={i} className="absolute rounded-sm" style={{left:`${x}%`,top:`${y}%`,width:`${w}px`,height:`${h}px`,background:String(c)}} />
+      ))}
+      {/* Panning dot path */}
+      <div className="absolute" style={{left:'48%',top:'42%',animation:'mapPan 2.5s ease-in-out infinite'}}>
+        {/* Pin */}
+        <div style={{animation:'pinDrop 0.6s cubic-bezier(.36,.07,.19,.97) both'}}>
+          <div className="w-7 h-7 rounded-full rounded-bl-none rotate-[225deg] bg-[#FF4651] border-2 border-white shadow-lg" style={{boxShadow:'0 3px 8px rgba(255,70,81,0.5)'}} />
+        </div>
+        {/* Ripples */}
+        <div className="absolute -inset-1 rounded-full border-2 border-[#FF4651]/50" style={{animation:'ripple 1.5s ease-out 0.4s infinite'}} />
+        <div className="absolute -inset-1 rounded-full border-2 border-[#FF4651]/30" style={{animation:'ripple 1.5s ease-out 0.8s infinite'}} />
+      </div>
+      {/* Moving scan line */}
+      <div className="absolute left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-[#FF4651]/60 to-transparent" style={{animation:'scanY 2s linear infinite'}} />
+    </div>
+  );
+}
+
+/* Review collection scene */
+function ReviewScene() {
+  const cards = [
+    { stars: 5, text: '정말 맛있었어요! 직원분도 친절하고...', name: '맛집탐험가', ago: '3일 전' },
+    { stars: 4, text: '분위기가 좋고 음식도 괜찮았습니다.', name: '서울미식가', ago: '1주 전' },
+    { stars: 5, text: '강추합니다 또 방문할게요 ㅎㅎ', name: '리뷰왕', ago: '2주 전' },
+  ];
+  return (
+    <div className="absolute inset-0 bg-white flex flex-col justify-center gap-2.5 px-4 py-3 overflow-hidden">
+      {cards.map((c, i) => (
+        <div key={i} className="bg-[#F9F9F9] rounded-xl p-3 border border-[#EEEEEE]"
+          style={{animation:`cardSlide 0.5s ease-out ${i * 0.3}s both`}}>
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center gap-1.5">
+              <div className="w-5 h-5 rounded-full bg-[#DDDDDD]" />
+              <span className="text-[10px] font-bold text-[#444444]">{c.name}</span>
+            </div>
+            <span className="text-[10px] text-[#AAAAAA]">{c.ago}</span>
+          </div>
+          <div className="flex gap-0.5 mb-1.5">
+            {Array.from({length: 5}).map((_, j) => (
+              <span key={j} className={`text-[10px] ${j < c.stars ? 'text-[#FF8A00]' : 'text-[#DDDDDD]'}`}
+                style={{animation:`starPop 0.3s ease-out ${i*0.3 + j*0.06 + 0.2}s both`}}>★</span>
+            ))}
+          </div>
+          <div className="h-[6px] bg-[#EEEEEE] rounded-full w-full mb-1" />
+          <div className="h-[6px] bg-[#EEEEEE] rounded-full w-2/3" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Pattern scan scene */
+function ScanScene() {
+  const items = ['반복 표현 패턴', '작성자 이력', '평점 분포', '작성 시간대', '내용 구체성'];
+  return (
+    <div className="absolute inset-0 bg-white flex flex-col justify-center px-5 py-4 overflow-hidden">
+      <div className="relative bg-[#F9F9F9] rounded-xl border border-[#EEEEEE] p-4 overflow-hidden">
+        {/* Scan beam */}
+        <div className="absolute left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-[#00C37D] to-transparent opacity-80"
+          style={{animation:'scanY 1.8s linear infinite'}} />
+        <ul className="space-y-2.5">
+          {items.map((item, i) => (
+            <li key={i} className="flex items-center gap-2.5" style={{animation:`fadeIn 0.3s ease-out ${i*0.28}s both`}}>
+              <span className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0"
+                style={{background:'#111111', color:'white', animation:`checkPop 0.3s ease-out ${i*0.28+0.15}s both`, transform:'scale(0)'}}>✓</span>
+              <div className="flex-1 h-[7px] bg-[#EEEEEE] rounded-full overflow-hidden">
+                <div className="h-full bg-[#111111] rounded-full" style={{width:`${55+i*8}%`,animation:`barFill 0.5s ease-out ${i*0.28+0.1}s both`,transform:'scaleX(0)',transformOrigin:'left'}} />
+              </div>
+              <span className="text-[10px] text-[#888888] shrink-0 w-16 text-right">{item}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/* AI analysis scene */
+function AnalyzeScene() {
+  return (
+    <div className="absolute inset-0 bg-white flex flex-col items-center justify-center gap-4">
+      {/* Rotating rings */}
+      <div className="relative w-20 h-20">
+        <div className="absolute inset-0 rounded-full border-4 border-[#EEEEEE]" />
+        <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-[#111111]" style={{animation:'spin 1s linear infinite'}} />
+        <div className="absolute inset-[6px] rounded-full border-4 border-transparent border-t-[#FF4651]" style={{animation:'spin 0.7s linear infinite reverse'}} />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-xl">🤖</span>
+        </div>
+      </div>
+      {/* Score counting up */}
+      <div className="text-center">
+        <p className="text-[11px] text-[#8D8D8D] mb-1">신뢰도 점수 계산 중</p>
+        <div className="flex items-end justify-center gap-0.5">
+          {['7','4','·','·'].map((c, i) => (
+            <span key={i} className="text-[28px] font-black text-[#111111] leading-none"
+              style={{animation:`fadeIn 0.2s ease-out ${i*0.15}s both`, opacity:0}}>{c}</span>
+          ))}
+          <span className="text-[14px] text-[#AAAAAA] mb-1">/100</span>
+        </div>
+      </div>
+      {/* Mini node graph */}
+      <div className="relative w-32 h-10">
+        {[[0,50],[40,10],[80,50],[120,20]].map(([x,y], i) => (
+          <div key={i}>
+            <div className="absolute w-2.5 h-2.5 rounded-full bg-[#111111]" style={{left:`${x}px`,top:`${y}%`,animation:`fadeIn 0.2s ease-out ${i*0.1}s both`,opacity:0}} />
+            {i < 3 && <div className="absolute h-[1px] bg-[#DDDDDD]" style={{left:`${x+5}px`,top:`calc(${y}% + 5px)`,width:'35px',animation:`fadeIn 0.2s ease-out ${i*0.1+0.05}s both`,opacity:0}} />}
           </div>
         ))}
       </div>
     </div>
+  );
+}
+
+const SCENE_COMPONENTS = [MapScene, ReviewScene, ScanScene, AnalyzeScene];
+
+function LoadingView() {
+  const [phase, setPhase] = useState(0);
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setVisible(false);
+      setTimeout(() => {
+        setPhase(p => (p + 1) % PHASES.length);
+        setVisible(true);
+      }, 300);
+    }, 2800);
+    return () => clearInterval(id);
+  }, []);
+
+  const SceneComponent = SCENE_COMPONENTS[phase];
+
+  return (
+    <>
+      <style>{`
+        @keyframes pinDrop {
+          0%   { transform: translateY(-40px) scale(0.5); opacity: 0; }
+          70%  { transform: translateY(4px) scale(1.1); opacity: 1; }
+          100% { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        @keyframes ripple {
+          0%   { transform: scale(1); opacity: 0.7; }
+          100% { transform: scale(4); opacity: 0; }
+        }
+        @keyframes mapPan {
+          0%   { transform: translate(0,0); }
+          30%  { transform: translate(-8px,-4px); }
+          70%  { transform: translate(6px,5px); }
+          100% { transform: translate(0,0); }
+        }
+        @keyframes scanY {
+          0%   { top: 0%; }
+          100% { top: 100%; }
+        }
+        @keyframes cardSlide {
+          0%   { transform: translateX(50px); opacity: 0; }
+          100% { transform: translateX(0);    opacity: 1; }
+        }
+        @keyframes starPop {
+          0%   { transform: scale(0); opacity: 0; }
+          70%  { transform: scale(1.4); opacity: 1; }
+          100% { transform: scale(1);   opacity: 1; }
+        }
+        @keyframes fadeIn {
+          0%   { opacity: 0; transform: translateY(4px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes checkPop {
+          0%   { transform: scale(0); }
+          70%  { transform: scale(1.3); }
+          100% { transform: scale(1); }
+        }
+        @keyframes barFill {
+          0%   { transform: scaleX(0); }
+          100% { transform: scaleX(1); }
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+
+      <div className="bg-white min-h-screen flex flex-col items-center justify-center px-6">
+        {/* Animation panel */}
+        <div className="w-full max-w-[320px] h-[240px] rounded-2xl border-2 border-[#EEEEEE] overflow-hidden relative shadow-sm mb-6"
+          style={{ opacity: visible ? 1 : 0, transition: 'opacity 0.3s ease' }}>
+          <SceneComponent />
+        </div>
+
+        {/* Phase label */}
+        <div className="text-center mb-6" style={{ opacity: visible ? 1 : 0, transition: 'opacity 0.3s ease' }}>
+          <p className="text-[15px] font-bold text-[#111111]">{PHASES[phase].label}</p>
+        </div>
+
+        {/* Step dots */}
+        <div className="flex gap-2">
+          {PHASES.map((_, i) => (
+            <div key={i} className="rounded-full transition-all duration-300"
+              style={{ width: i === phase ? '20px' : '6px', height: '6px', background: i === phase ? '#111111' : '#DDDDDD' }} />
+          ))}
+        </div>
+
+        <p className="text-[11px] text-[#AAAAAA] mt-6">최대 20~30초 소요될 수 있습니다</p>
+      </div>
+    </>
   );
 }
 
