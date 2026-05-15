@@ -569,14 +569,12 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [scrapeFailed, setScrapeFailed] = useState(false);
   const [waitlistOpen, setWaitlistOpen] = useState(false);
 
   const runFetch = async (body: Record<string, string>) => {
     setLoading(true);
     setError(null);
     setResult(null);
-    setScrapeFailed(false);
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
@@ -584,11 +582,6 @@ export default function Home() {
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (res.status === 422 && data.code === 'SCRAPE_FAILED') {
-        setScrapeFailed(true);
-        setError(data.error);
-        return;
-      }
       if (!res.ok) throw new Error(data.error);
       setResult(data);
     } catch (e) {
@@ -601,7 +594,7 @@ export default function Home() {
   const handleAnalyzeUrl = () => { if (url.trim()) runFetch({ url: url.trim() }); };
   const handleAnalyzeText = () => { if (pasteText.trim()) runFetch({ text: pasteText.trim() }); };
 
-  const reset = () => { setResult(null); setError(null); setUrl(''); setPasteText(''); setScrapeFailed(false); setMode('url'); };
+  const reset = () => { setResult(null); setError(null); setUrl(''); setPasteText(''); setMode('url'); };
 
   if (loading) return <LoadingView />;
   if (result) return <ResultView result={result} onReset={reset} />;
@@ -650,7 +643,7 @@ export default function Home() {
         <div className="bg-white mt-2 border-y border-[#EEEEEE]">
           <div className="flex border-b border-[#EEEEEE]">
             {(['url', 'text'] as const).map((m) => (
-              <button key={m} onClick={() => { setMode(m); setError(null); setScrapeFailed(false); }}
+              <button key={m} onClick={() => { setMode(m); setError(null); }}
                 className={`flex-1 py-3 text-[13px] font-bold transition-colors ${mode === m ? 'text-[#111111] border-b-2 border-[#111111]' : 'text-[#AAAAAA]'}`}>
                 {m === 'url' ? '🔗 링크 붙여넣기' : '📋 리뷰 직접 입력'}
               </button>
@@ -664,13 +657,13 @@ export default function Home() {
                   <input
                     type="url"
                     value={url}
-                    onChange={e => { setUrl(e.target.value); setError(null); setScrapeFailed(false); }}
+                    onChange={e => { setUrl(e.target.value); setError(null); }}
                     onKeyDown={e => { if (e.key === 'Enter') handleAnalyzeUrl(); }}
                     placeholder="https://map.naver.com/p/.../place/..."
                     className="w-full border-2 border-[#EEEEEE] rounded-xl px-4 py-3.5 text-[13px] text-[#111111] placeholder-[#BBBBBB] focus:outline-none focus:border-[#111111] transition-colors pr-10"
                   />
                   {url && (
-                    <button onClick={() => { setUrl(''); setError(null); setScrapeFailed(false); }}
+                    <button onClick={() => { setUrl(''); setError(null); }}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-[#BBBBBB] hover:text-[#888] text-lg">×</button>
                   )}
                 </div>
@@ -678,21 +671,6 @@ export default function Home() {
                   네이버 지도 앱 → 장소 선택 → 공유 → 링크 복사 후 붙여넣기<br />
                   <span className="text-[#00A86B]">naver.me 단축 링크도 지원합니다</span>
                 </p>
-
-                {/* Scrape failed fallback */}
-                {scrapeFailed && (
-                  <div className="mt-4 bg-[#FFF8ED] border border-[#FFE4B0] rounded-xl p-4">
-                    <p className="text-[12px] font-bold text-[#FF8A00] mb-1.5">자동 수집 실패</p>
-                    <p className="text-[12px] text-[#555555] leading-relaxed mb-3">
-                      네이버의 접근 제한으로 리뷰를 자동으로 가져올 수 없습니다.<br />
-                      리뷰 탭에서 텍스트를 직접 복사해서 분석할 수 있어요.
-                    </p>
-                    <button onClick={() => { setMode('text'); setError(null); setScrapeFailed(false); }}
-                      className="w-full py-2.5 rounded-lg bg-[#111111] text-white text-[13px] font-bold">
-                      📋 리뷰 직접 입력으로 전환
-                    </button>
-                  </div>
-                )}
               </>
             ) : (
               <>
@@ -736,8 +714,8 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Error (non-scrape-fail errors only) */}
-        {error && !scrapeFailed && (
+        {/* Error */}
+        {error && (
           <div className="mx-4 mt-3 bg-[#FFF0F0] border border-[#FFD0D0] rounded-xl px-4 py-3 text-[13px] text-[#CC0000] whitespace-pre-line">
             {error}
           </div>
@@ -748,9 +726,9 @@ export default function Home() {
           {mode === 'url' ? (
             <button
               onClick={handleAnalyzeUrl}
-              disabled={!url.trim() || scrapeFailed}
+              disabled={!url.trim()}
               className={`w-full py-4 rounded-xl font-bold text-[15px] tracking-tight transition-all duration-150 ${
-                url.trim() && !scrapeFailed
+                url.trim()
                   ? 'bg-[#111111] text-white active:scale-[0.98] hover:bg-[#333333]'
                   : 'bg-[#DDDDDD] text-[#AAAAAA] cursor-not-allowed'
               }`}
