@@ -564,23 +564,31 @@ function LoadingView() {
 // ─── Main page ─────────────────────────────────────────────────
 export default function Home() {
   const [url, setUrl] = useState('');
+  const [pasteText, setPasteText] = useState('');
+  const [mode, setMode] = useState<'url' | 'text'>('url');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [scrapeFailed, setScrapeFailed] = useState(false);
   const [waitlistOpen, setWaitlistOpen] = useState(false);
 
-  const handleAnalyze = async () => {
-    if (!url.trim()) return;
+  const runFetch = async (body: Record<string, string>) => {
     setLoading(true);
     setError(null);
     setResult(null);
+    setScrapeFailed(false);
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
+      if (res.status === 422 && data.code === 'SCRAPE_FAILED') {
+        setScrapeFailed(true);
+        setError(data.error);
+        return;
+      }
       if (!res.ok) throw new Error(data.error);
       setResult(data);
     } catch (e) {
@@ -590,7 +598,10 @@ export default function Home() {
     }
   };
 
-  const reset = () => { setResult(null); setError(null); setUrl(''); };
+  const handleAnalyzeUrl = () => { if (url.trim()) runFetch({ url: url.trim() }); };
+  const handleAnalyzeText = () => { if (pasteText.trim()) runFetch({ text: pasteText.trim() }); };
+
+  const reset = () => { setResult(null); setError(null); setUrl(''); setPasteText(''); setScrapeFailed(false); setMode('url'); };
 
   if (loading) return <LoadingView />;
   if (result) return <ResultView result={result} onReset={reset} />;
@@ -635,28 +646,69 @@ export default function Home() {
           <p className="text-[11px] text-[#8D8D8D]">본 서비스는 참고용이며 법적 효력이 있는 판단이 아닙니다.</p>
         </div>
 
-        {/* URL Input */}
-        <div className="bg-white mt-2 border-y border-[#EEEEEE] px-5 py-5">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="w-5 h-5 rounded-full bg-[#111111] text-white text-[11px] font-bold flex items-center justify-center">1</span>
-            <span className="text-[13px] font-bold text-[#111111]">네이버 플레이스 링크 붙여넣기</span>
+        {/* Input mode tabs */}
+        <div className="bg-white mt-2 border-y border-[#EEEEEE]">
+          <div className="flex border-b border-[#EEEEEE]">
+            {(['url', 'text'] as const).map((m) => (
+              <button key={m} onClick={() => { setMode(m); setError(null); setScrapeFailed(false); }}
+                className={`flex-1 py-3 text-[13px] font-bold transition-colors ${mode === m ? 'text-[#111111] border-b-2 border-[#111111]' : 'text-[#AAAAAA]'}`}>
+                {m === 'url' ? '🔗 링크 붙여넣기' : '📋 리뷰 직접 입력'}
+              </button>
+            ))}
           </div>
-          <div className="relative">
-            <input
-              type="url"
-              value={url}
-              onChange={e => setUrl(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleAnalyze(); }}
-              placeholder="https://map.naver.com/v5/entry/place/..."
-              className="w-full border-2 border-[#EEEEEE] rounded-xl px-4 py-3.5 text-[13px] text-[#111111] placeholder-[#BBBBBB] focus:outline-none focus:border-[#111111] transition-colors pr-10"
-            />
-            {url && (
-              <button onClick={() => setUrl('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#BBBBBB] hover:text-[#888] text-lg">×</button>
+
+          <div className="px-5 py-5">
+            {mode === 'url' ? (
+              <>
+                <div className="relative">
+                  <input
+                    type="url"
+                    value={url}
+                    onChange={e => { setUrl(e.target.value); setError(null); setScrapeFailed(false); }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleAnalyzeUrl(); }}
+                    placeholder="https://map.naver.com/p/.../place/..."
+                    className="w-full border-2 border-[#EEEEEE] rounded-xl px-4 py-3.5 text-[13px] text-[#111111] placeholder-[#BBBBBB] focus:outline-none focus:border-[#111111] transition-colors pr-10"
+                  />
+                  {url && (
+                    <button onClick={() => { setUrl(''); setError(null); setScrapeFailed(false); }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#BBBBBB] hover:text-[#888] text-lg">×</button>
+                  )}
+                </div>
+                <p className="text-[11px] text-[#AAAAAA] mt-2 leading-relaxed">
+                  네이버 지도 앱 → 장소 선택 → 공유 → 링크 복사 후 붙여넣기<br />
+                  <span className="text-[#00A86B]">naver.me 단축 링크도 지원합니다</span>
+                </p>
+
+                {/* Scrape failed fallback */}
+                {scrapeFailed && (
+                  <div className="mt-4 bg-[#FFF8ED] border border-[#FFE4B0] rounded-xl p-4">
+                    <p className="text-[12px] font-bold text-[#FF8A00] mb-1.5">자동 수집 실패</p>
+                    <p className="text-[12px] text-[#555555] leading-relaxed mb-3">
+                      네이버의 접근 제한으로 리뷰를 자동으로 가져올 수 없습니다.<br />
+                      리뷰 탭에서 텍스트를 직접 복사해서 분석할 수 있어요.
+                    </p>
+                    <button onClick={() => { setMode('text'); setError(null); setScrapeFailed(false); }}
+                      className="w-full py-2.5 rounded-lg bg-[#111111] text-white text-[13px] font-bold">
+                      📋 리뷰 직접 입력으로 전환
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <textarea
+                  value={pasteText}
+                  onChange={e => setPasteText(e.target.value)}
+                  placeholder={'네이버 플레이스 리뷰 탭에서 리뷰 내용을 복사해서 여기에 붙여넣어 주세요.\n\n예시:\n★★★★★ 정말 맛있었어요. 직원분도 친절하고...\n★★★★☆ 분위기가 좋았습니다. 음식은...'}
+                  rows={8}
+                  className="w-full border-2 border-[#EEEEEE] rounded-xl px-4 py-3.5 text-[13px] text-[#111111] placeholder-[#BBBBBB] focus:outline-none focus:border-[#111111] transition-colors resize-none leading-relaxed"
+                />
+                <p className="text-[11px] text-[#AAAAAA] mt-2">
+                  리뷰 10개 이상 붙여넣을수록 분석 정확도가 올라갑니다.
+                </p>
+              </>
             )}
           </div>
-          <p className="text-[11px] text-[#AAAAAA] mt-2 leading-relaxed">
-            네이버 지도 앱 → 장소 선택 → 공유 → 링크 복사 후 붙여넣기
-          </p>
         </div>
 
         {/* What we analyze */}
@@ -684,27 +736,42 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Error */}
-        {error && (
-          <div className="mx-4 mt-3 bg-[#FFF0F0] border border-[#FFD0D0] rounded-xl px-4 py-3 text-sm text-[#CC0000] whitespace-pre-line">
+        {/* Error (non-scrape-fail errors only) */}
+        {error && !scrapeFailed && (
+          <div className="mx-4 mt-3 bg-[#FFF0F0] border border-[#FFD0D0] rounded-xl px-4 py-3 text-[13px] text-[#CC0000] whitespace-pre-line">
             {error}
           </div>
         )}
 
         {/* CTA */}
         <div className="px-4 pt-4 pb-8">
-          <button
-            onClick={handleAnalyze}
-            disabled={!url.trim()}
-            className={`w-full py-4 rounded-xl font-bold text-[15px] tracking-tight transition-all duration-150 ${
-              url.trim()
-                ? 'bg-[#111111] text-white active:scale-[0.98] hover:bg-[#333333]'
-                : 'bg-[#DDDDDD] text-[#AAAAAA] cursor-not-allowed'
-            }`}
-          >
-            리뷰 신뢰도 분석하기
-          </button>
-          {!url.trim() && <p className="text-center text-[12px] text-[#AAAAAA] mt-2">링크를 먼저 붙여넣어 주세요</p>}
+          {mode === 'url' ? (
+            <button
+              onClick={handleAnalyzeUrl}
+              disabled={!url.trim() || scrapeFailed}
+              className={`w-full py-4 rounded-xl font-bold text-[15px] tracking-tight transition-all duration-150 ${
+                url.trim() && !scrapeFailed
+                  ? 'bg-[#111111] text-white active:scale-[0.98] hover:bg-[#333333]'
+                  : 'bg-[#DDDDDD] text-[#AAAAAA] cursor-not-allowed'
+              }`}
+            >
+              리뷰 신뢰도 분석하기
+            </button>
+          ) : (
+            <button
+              onClick={handleAnalyzeText}
+              disabled={pasteText.trim().length < 50}
+              className={`w-full py-4 rounded-xl font-bold text-[15px] tracking-tight transition-all duration-150 ${
+                pasteText.trim().length >= 50
+                  ? 'bg-[#111111] text-white active:scale-[0.98] hover:bg-[#333333]'
+                  : 'bg-[#DDDDDD] text-[#AAAAAA] cursor-not-allowed'
+              }`}
+            >
+              붙여넣은 리뷰 분석하기
+            </button>
+          )}
+          {mode === 'url' && !url.trim() && <p className="text-center text-[12px] text-[#AAAAAA] mt-2">링크를 먼저 붙여넣어 주세요</p>}
+          {mode === 'text' && pasteText.trim().length < 50 && <p className="text-center text-[12px] text-[#AAAAAA] mt-2">리뷰를 더 붙여넣어 주세요 ({pasteText.trim().length}/50자)</p>}
         </div>
       </main>
     </div>
