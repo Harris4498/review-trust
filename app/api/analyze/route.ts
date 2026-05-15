@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextRequest, NextResponse } from 'next/server';
 
-// Naver API blocks non-Korean IPs — run from Seoul region
+// Prefer Seoul region; falls back to mobile scraping if GraphQL is geo-blocked
 export const preferredRegion = 'icn1';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -9,8 +9,8 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 // ─── URL parsing ───────────────────────────────────────────────
 function extractPlaceId(url: string): string | null {
   const patterns = [
-    /map\.naver\.com\/p\/[^?#]*\/place\/(\d+)/,   // new /p/ format
-    /map\.naver\.com\/v5\/entry\/place\/(\d+)/,     // classic v5 format
+    /map\.naver\.com\/p\/[^?#]*\/place\/(\d+)/,
+    /map\.naver\.com\/v5\/entry\/place\/(\d+)/,
     /place\.naver\.com\/(?:place\/|restaurant\/|cafe\/|beauty\/|hospital\/|hairshop\/)?(\d+)/,
     /pcmap\.place\.naver\.com\/place\/(\d+)/,
     /entry\/place\/(\d+)/,
@@ -63,11 +63,6 @@ interface PlaceInfo {
 }
 
 // ─── Naver Place GraphQL scraper ───────────────────────────────
-// Key findings from direct API testing:
-//   1. Body MUST be an array: [{operationName, variables, query}]
-//   2. Response is also an array: res[0].data.visitorReviews
-//   3. Referer MUST be pcmap.place.naver.com/place/{id}/review/visitor
-//   4. rating can be null for some reviews
 async function fetchNaverReviews(placeId: string, page = 1, size = 50): Promise<{ items: NaverReview[]; total: number }> {
   const query = `query getVisitorReviews($input: VisitorReviewsInput) {
     visitorReviews(input: $input) {
@@ -121,11 +116,11 @@ async function fetchNaverReviews(placeId: string, page = 1, size = 50): Promise<
     signal: AbortSignal.timeout(10000),
   });
 
-  if (!res.ok) throw new Error(`Naver API ${res.status}`);
+  if (!res.ok) throw new Error(`Naver GraphQL ${res.status}`);
 
   const data = await res.json();
   const vr = data?.[0]?.data?.visitorReviews;
-  if (!vr) throw new Error('리뷰 데이터 없음');
+  if (!vr) throw new Error('GraphQL 리뷰 데이터 없음');
 
   const items: NaverReview[] = (vr.items ?? []).map((r: Record<string, unknown>) => {
     const author = r.author as Record<string, unknown> | undefined;
@@ -145,36 +140,138 @@ async function fetchNaverReviews(placeId: string, page = 1, size = 50): Promise<
   return { items, total: Number(vr.total ?? items.length) };
 }
 
-async function scrapeNaverPlace(placeId: string): Promise<{ info: PlaceInfo; reviews: NaverReview[] }> {
-  const { items, total } = await fetchNaverReviews(placeId, 1, 50);
+// ─── Mobile page Apollo State scraper (fallback) ───────────────
+// Used when Naver's GraphQL API rejects the request (geo-blocking from non-KR IPs).
+// m.place.naver.com embeds window.__APOLLO_STATE__ in the HTML with review data.
+async function scrapeNaverMobilePage(placeId: string): Promise<{ info: PlaceInfo; reviews: NaverReview[] }> {
+  const res = await fetch(`https://m.place.naver.com/place/${placeId}/review/visitor`, {
+    method: 'GET',
+    redirect: 'follow',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+      'Accept': 'text/html,application/xhtml+xml,*/*',
+      'Accept-Language': 'ko-KR,ko;q=0.9',
+    },
+    signal: AbortSignal.timeout(15000),
+  });
 
-  if (items.length === 0) {
+  if (!res.ok) throw new Error(`모바일 페이지 오류 ${res.status}`);
+  const html = await res.text();
+
+  // Extract window.__APOLLO_STATE__ using brace matching
+  const markerIdx = html.indexOf('window.__APOLLO_STATE__');
+  if (markerIdx === -1) throw new Error('리뷰 데이터를 찾을 수 없습니다 (Apollo State 없음)');
+
+  const jsonStart = html.indexOf('{', markerIdx);
+  if (jsonStart === -1) throw new Error('리뷰 데이터 파싱 실패');
+
+  let depth = 0;
+  let jsonEnd = jsonStart;
+  for (let i = jsonStart; i < html.length; i++) {
+    const c = html[i];
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) { jsonEnd = i + 1; break; }
+    }
+  }
+
+  const state = JSON.parse(html.slice(jsonStart, jsonEnd)) as Record<string, unknown>;
+
+  // Place info
+  const placeKey = Object.keys(state).find(k => k.startsWith('PlaceDetailBase:'));
+  const placeData = placeKey ? (state[placeKey] as Record<string, unknown>) : {};
+
+  // Reviews
+  const reviewItems: NaverReview[] = [];
+  for (const [key, val] of Object.entries(state)) {
+    if (!key.startsWith('VisitorReview:') || typeof val !== 'object' || val === null) continue;
+    const r = val as Record<string, unknown>;
+    const body = String(r.body ?? '').trim();
+    if (!body) continue;
+
+    let authorNickname = '익명';
+    if (typeof r.author === 'object' && r.author !== null && '__ref' in r.author) {
+      const authorRef = (r.author as { __ref: string }).__ref;
+      const authorData = state[authorRef] as Record<string, unknown> | undefined;
+      if (authorData) authorNickname = String(authorData.nickname ?? '익명');
+    }
+
+    let replyBody: string | undefined;
+    if (typeof r.reply === 'object' && r.reply !== null) {
+      const reply = r.reply as Record<string, unknown>;
+      if (reply.body) replyBody = String(reply.body);
+    }
+
+    reviewItems.push({
+      id: String(r.id ?? ''),
+      rating: r.rating != null ? Number(r.rating) : null,
+      body,
+      author: authorNickname,
+      authorReviewCount: 0,
+      created: String(r.created ?? ''),
+      tags: Array.isArray(r.tags) ? r.tags.map(String) : [],
+      reply: replyBody,
+    });
+  }
+
+  if (reviewItems.length === 0) {
     throw Object.assign(new Error('리뷰가 없거나 비공개 플레이스입니다.'), { code: 'NO_REVIEWS', placeId });
   }
 
-  // Fetch a second page if there are more reviews (up to 100 total for better analysis)
-  let allReviews = items;
-  if (total > 50 && items.length === 50) {
-    try {
-      const page2 = await fetchNaverReviews(placeId, 2, 50);
-      allReviews = [...items, ...page2.items];
-    } catch { /* use page 1 only */ }
-  }
-
-  const ratingItems = allReviews.filter(r => r.rating != null);
+  const ratingItems = reviewItems.filter(r => r.rating != null);
   const ratingAvg = ratingItems.length > 0
     ? ratingItems.reduce((s, r) => s + (r.rating ?? 0), 0) / ratingItems.length
     : 0;
 
   return {
     info: {
-      name: `플레이스 ${placeId}`,
-      category: '업체',
-      totalReviewCount: total,
+      name: String(placeData.name ?? `플레이스 ${placeId}`),
+      category: String(placeData.category ?? '업체'),
+      totalReviewCount: Number(placeData.visitorReviewsTotal ?? reviewItems.length),
       ratingAvg,
     },
-    reviews: allReviews,
+    reviews: reviewItems,
   };
+}
+
+// ─── Orchestrate scraping: GraphQL → mobile page fallback ──────
+async function scrapeNaverPlace(placeId: string): Promise<{ info: PlaceInfo; reviews: NaverReview[] }> {
+  try {
+    const { items, total } = await fetchNaverReviews(placeId, 1, 50);
+
+    if (items.length === 0) {
+      throw Object.assign(new Error('리뷰가 없거나 비공개 플레이스입니다.'), { code: 'NO_REVIEWS', placeId });
+    }
+
+    let allReviews = items;
+    if (total > 50 && items.length === 50) {
+      try {
+        const page2 = await fetchNaverReviews(placeId, 2, 50);
+        allReviews = [...items, ...page2.items];
+      } catch { /* use page 1 only */ }
+    }
+
+    const ratingItems = allReviews.filter(r => r.rating != null);
+    const ratingAvg = ratingItems.length > 0
+      ? ratingItems.reduce((s, r) => s + (r.rating ?? 0), 0) / ratingItems.length
+      : 0;
+
+    return {
+      info: {
+        name: `플레이스 ${placeId}`,
+        category: '업체',
+        totalReviewCount: total,
+        ratingAvg,
+      },
+      reviews: allReviews,
+    };
+  } catch (e) {
+    const err = e as Error & { code?: string };
+    if (err.code === 'NO_REVIEWS') throw e;
+    // GraphQL failed (likely geo-blocked) — try mobile page
+    return scrapeNaverMobilePage(placeId);
+  }
 }
 
 // ─── Claude analysis ───────────────────────────────────────────
